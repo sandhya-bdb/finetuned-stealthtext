@@ -9,20 +9,19 @@ from transformers import (
     TrainingArguments
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from trl import SFTTrainer, SFTConfig
 
 def train(args):
-    # Determine the device and quantization capability
+    # Determine device
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     print(f"Using device: {device}")
     
-    # 4-bit quantization configuration (only supported on CUDA/NVIDIA GPUs, like Google Colab)
+    # 4-bit quantization configuration (Colab NVIDIA GPUs e.g. T4/L4/A100)
     quantization_config = None
     if device == "cuda" and args.use_qlora:
         print("Configuring 4-bit QLoRA quantization...")
         quantization_config = BitsAndBytesConfig(
             load_in_4bit=True,
-            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
             bnb_4bit_quant_type="nf4",
             bnb_4bit_use_double_quant=True
         )
@@ -37,19 +36,19 @@ def train(args):
     
     dataset = load_dataset("json", data_files=data_files)
     
-    # Load tokenizer and model
+    # Load tokenizer and base model
     print(f"Loading tokenizer and base model: {args.base_model}...")
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-        
+    tokenizer.padding_side = "right"
+
     model_kwargs = {}
     if quantization_config:
         model_kwargs["quantization_config"] = quantization_config
         model_kwargs["device_map"] = "auto"
     else:
-        # Load in half precision (float16) if on MPS/GPU, otherwise float32 on CPU
-        torch_dtype = torch.bfloat16 if torch.cuda.is_available() or torch.backends.mps.is_available() else torch.float32
+        torch_dtype = torch.bfloat16 if (torch.cuda.is_available() and torch.cuda.is_bf16_supported()) else (torch.float16 if torch.cuda.is_available() or torch.backends.mps.is_available() else torch.float32)
         model_kwargs["torch_dtype"] = torch_dtype
         if device == "mps":
             model_kwargs["device_map"] = {"": "mps"}
@@ -62,7 +61,7 @@ def train(args):
         **model_kwargs
     )
     
-    # Configure LoRA
+    # Configure LoRA adapter
     print("Configuring LoRA parameters...")
     lora_config = LoraConfig(
         r=args.lora_r,
@@ -76,36 +75,40 @@ def train(args):
     if quantization_config:
         model = prepare_model_for_kbit_training(model)
     
-    # SFT Prompt Formatter function (Alpaca style) - handles both batched and single-record calls
+    # Custom ChatML / Native Chat Template Formatter function
     def formatting_prompts_func(example):
-        if isinstance(example.get("instruction"), list):
-            output_texts = []
-            for i in range(len(example["instruction"])):
-                text = (
-                    f"Below is an instruction that describes a task, paired with an input that provides further context. "
-                    f"Write a response that appropriately completes the request.\n\n"
-                    f"### Instruction:\n{example['instruction'][i]}\n\n"
-                    f"### Input:\n{example['input'][i]}\n\n"
-                    f"### Response:\n{example['output'][i]}"
-                )
-                output_texts.append(text)
-            return output_texts
+        if "messages" in example and example["messages"]:
+            # If batched input
+            if isinstance(example["messages"][0], list):
+                outputs = []
+                for msgs in example["messages"]:
+                    text = tokenizer.apply_chat_template(msgs, tokenize=False)
+                    outputs.append(text)
+                return outputs
+            else:
+                return tokenizer.apply_chat_template(example["messages"], tokenize=False)
         else:
-            return (
-                f"Below is an instruction that describes a task, paired with an input that provides further context. "
-                f"Write a response that appropriately completes the request.\n\n"
-                f"### Instruction:\n{example.get('instruction', '')}\n\n"
-                f"### Input:\n{example.get('input', '')}\n\n"
-                f"### Response:\n{example.get('output', '')}"
-            )
+            # Fallback to instruction format if messages column is absent
+            if isinstance(example.get("instruction"), list):
+                output_texts = []
+                for i in range(len(example["instruction"])):
+                    text = (
+                        f"### Instruction:\n{example['instruction'][i]}\n\n"
+                        f"### Input:\n{example['input'][i]}\n\n"
+                        f"### Response:\n{example['output'][i]}"
+                    )
+                    output_texts.append(text)
+                return output_texts
+            else:
+                return (
+                    f"### Instruction:\n{example.get('instruction', '')}\n\n"
+                    f"### Input:\n{example.get('input', '')}\n\n"
+                    f"### Response:\n{example.get('output', '')}"
+                )
 
-    # Set tokenizer max length
     tokenizer.model_max_length = args.max_seq_length
 
-    # Set up SFT training arguments robustly across trl versions
     print("Setting up training arguments...")
-    
-    # In Colab/CUDA we want fp16 or bf16 training
     fp16 = device == "cuda" and not torch.cuda.is_bf16_supported()
     bf16 = device == "cuda" and torch.cuda.is_bf16_supported()
     
@@ -117,12 +120,15 @@ def train(args):
             per_device_train_batch_size=args.batch_size,
             gradient_accumulation_steps=args.grad_accum,
             learning_rate=args.learning_rate,
+            lr_scheduler_type="cosine",
+            warmup_ratio=0.05,
             logging_steps=10,
             save_strategy="epoch",
             eval_strategy="epoch" if "validation" in dataset else "no",
             fp16=fp16,
             bf16=bf16,
             report_to="none",
+            max_seq_length=args.max_seq_length,
             push_to_hub=args.push_to_hub,
             hub_model_id=args.hub_model_id if args.push_to_hub else None
         )
@@ -133,6 +139,8 @@ def train(args):
             per_device_train_batch_size=args.batch_size,
             gradient_accumulation_steps=args.grad_accum,
             learning_rate=args.learning_rate,
+            lr_scheduler_type="cosine",
+            warmup_ratio=0.05,
             logging_steps=10,
             save_strategy="epoch",
             eval_strategy="epoch" if "validation" in dataset else "no",
@@ -143,7 +151,7 @@ def train(args):
             hub_model_id=args.hub_model_id if args.push_to_hub else None
         )
     
-    # Initialize SFTTrainer robustly
+    from trl import SFTTrainer
     try:
         trainer = SFTTrainer(
             model=model,
@@ -165,11 +173,9 @@ def train(args):
             args=sft_config
         )
     
-    # Run training
     print("Starting SFT training...")
     trainer.train()
     
-    # Save the final adapter weights
     print(f"Saving fine-tuned adapter to {args.output_dir}...")
     trainer.model.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
