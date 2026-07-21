@@ -42,8 +42,8 @@ Open and run **[`StealthText_FineTuning_Colab.ipynb`](file:///Users/sandhyabanti
 # 1. Install required libraries
 !pip install -q -U transformers peft trl accelerate bitsandbytes datasets
 
-# 2. Preprocess 5,000 quality training samples with system prompt & length filter
-!python download_dataset.py --limit 5000 --min_words 20
+# 2. Preprocess 2,500 quality training samples with system prompt & length filter
+!python download_dataset.py --limit 2500 --min_words 20
 
 # 3. Fine-tune Qwen 2.5 3B with QLoRA (4-bit quantization)
 !python train.py \
@@ -85,7 +85,7 @@ notebook_login()
 pip install -r requirements.txt
 
 # Download and preprocess dataset
-python download_dataset.py --limit 5000 --min_words 20
+python download_dataset.py --limit 2500 --min_words 20
 
 # Run training (Automatically detects Apple Silicon MPS or CUDA)
 python train.py --base_model "Qwen/Qwen2.5-3B-Instruct" --epochs 3 --batch_size 1 --grad_accum 8
