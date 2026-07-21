@@ -13,7 +13,15 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 def train(args):
     # Determine device
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-    print(f"Using device: {device}")
+    print("="*60)
+    print(f"USING DEVICE: {device.upper()}")
+    if device == "cpu":
+        print("⚠️ WARNING: Running on CPU! Training will be EXTREMELY slow (~40s/step).")
+        print("👉 In Google Colab, enable GPU by clicking:")
+        print("   Runtime -> Change runtime type -> Hardware accelerator -> T4 GPU")
+    else:
+        print(f"✅ GPU Acceleration Active: {torch.cuda.get_device_name(0) if device == 'cuda' else 'Apple Silicon MPS'}")
+    print("="*60)
     
     # 4-bit quantization configuration (Colab NVIDIA GPUs e.g. T4/L4/A100)
     quantization_config = None
@@ -78,7 +86,6 @@ def train(args):
     # Custom ChatML / Native Chat Template Formatter function
     def formatting_prompts_func(example):
         if "messages" in example and example["messages"]:
-            # If batched input
             if isinstance(example["messages"][0], list):
                 outputs = []
                 for msgs in example["messages"]:
@@ -88,7 +95,6 @@ def train(args):
             else:
                 return tokenizer.apply_chat_template(example["messages"], tokenize=False)
         else:
-            # Fallback to instruction format if messages column is absent
             if isinstance(example.get("instruction"), list):
                 output_texts = []
                 for i in range(len(example["instruction"])):
@@ -121,7 +127,7 @@ def train(args):
             gradient_accumulation_steps=args.grad_accum,
             learning_rate=args.learning_rate,
             lr_scheduler_type="cosine",
-            warmup_ratio=0.05,
+            warmup_steps=50,
             logging_steps=10,
             save_strategy="epoch",
             eval_strategy="epoch" if "validation" in dataset else "no",
@@ -140,7 +146,7 @@ def train(args):
             gradient_accumulation_steps=args.grad_accum,
             learning_rate=args.learning_rate,
             lr_scheduler_type="cosine",
-            warmup_ratio=0.05,
+            warmup_steps=50,
             logging_steps=10,
             save_strategy="epoch",
             eval_strategy="epoch" if "validation" in dataset else "no",
