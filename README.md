@@ -5,6 +5,8 @@
 [![HuggingFace](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Transformers-yellow)](https://huggingface.co/)
 [![PEFT](https://img.shields.io/badge/PEFT-QLoRA%204--bit-purple)](https://github.com/huggingface/peft)
 
+StealthText is an end-to-end Parameter-Efficient Fine-Tuning (PEFT) pipeline that adapts open-source LLMs—specifically Qwen 2.5 3B and Llama 3.1 8B—to transform generic, low-perplexity AI text into natural, human-written prose while strictly preserving core factual semantics. I built the entire pipeline using Hugging Face TRL's SFTTrainer, 4-bit QLoRA (NF4 quantization), and native ChatML templating, enabling fine-tuning of multi-billion parameter models within 16GB VRAM consumer GPU constraints without catastrophic forgetting.
+
 This repository contains the complete training pipeline, dataset preprocessing tools, Google Colab notebook, and inference scripts for fine-tuning open-source LLMs (`Qwen/Qwen2.5-3B-Instruct`, `Llama 3.1 8B`) to transform AI-generated text into natural, human-written prose that bypasses AI detectors.
 
 ---
